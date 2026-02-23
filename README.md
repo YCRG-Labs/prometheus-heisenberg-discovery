@@ -1,1 +1,1 @@
-# prometheus-heisenberg-discovery
+# J1-J2 Heisenberg Prometheus Framework

@@ -1,0 +1,47 @@
+# Default configuration for J1-J2 Heisenberg Prometheus Framework
+
+ed_parameters:
+  lattice_sizes: [4, 5, 6]
+  j2_j1_min: 0.3
+  j2_j1_max: 0.7
+  j2_j1_step: 0.01
+  lanczos_tol: 1.0e-10
+  use_translation_symmetry: true
+  # Parallel processing configuration
+  parallel: true
+  n_processes: null  # null = auto-detect (use all available cores)
+  # Memory optimization configuration
+  monitor_memory: true
+  clear_cache_after_computation: true
+
+qvae_architecture:
+  latent_dim: 8
+  encoder_layers: [512, 256, 128]
+  decoder_layers: [128, 256, 512]
+  
+training:
+  learning_rate: 0.001
+  batch_size: 32
+  max_epochs: 1000
+  patience: 50
+  beta: 0.1
+  gradient_clip: 1.0
+  n_random_seeds: 3
+  # GPU configuration
+  use_gpu: true
+  gpu_id: null  # null = auto-select first available GPU
+  
+analysis:
+  bootstrap_samples: 1000
+  correlation_threshold: 0.8
+  significance_level: 0.01
+  
+paths:
+  data_dir: "./data"
+  output_dir: "./output"
+  checkpoint_dir: "./checkpoints"
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "./logs/j1j2_prometheus.log"

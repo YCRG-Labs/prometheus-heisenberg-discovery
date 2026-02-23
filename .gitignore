@@ -205,3 +205,21 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# J1-J2 Heisenberg Prometheus specific
+data/
+!data/.gitkeep
+output/
+!output/.gitkeep
+checkpoints/
+logs/
+*.h5
+*.hdf5
+*.pkl
+laptop_progress.json
+ANALYSIS_RUNNING.md
+LAPTOP_ANALYSIS_COMPLETE
+VM_SETUP_COMPLETE.md
+READY_TO_RUN.md
+
+/paper/

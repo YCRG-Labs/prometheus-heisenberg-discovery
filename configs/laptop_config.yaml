@@ -1,0 +1,96 @@
+# Laptop-Optimized Configuration for J1-J2 Heisenberg Analysis
+# Designed for: 16 GB RAM, Windows, i9-13980HX (24 cores)
+# 
+# This configuration balances scientific validity with laptop constraints:
+# - Reduced parameter space (still scientifically valid)
+# - Sequential processing to avoid memory issues
+# - Optimized for overnight runs
+
+ed_parameters:
+  # Laptop-optimized: Only 4×4 lattice (16 spins)
+  # L=5 has odd spins (physics constraint - can't use Sz=0 sector)
+  # L=6 requires 67+ GB RAM (too large for laptop)
+  lattice_sizes: [4]  # 4×4 = 16 spins (manageable on 16 GB RAM)
+  
+  # Slightly coarser parameter grid (still high resolution)
+  j2_j1_min: 0.3
+  j2_j1_max: 0.7
+  j2_j1_step: 0.02  # 0.02 instead of 0.01 (21 points instead of 41)
+  
+  lanczos_tol: 1.0e-10
+  use_translation_symmetry: true
+  
+  # CRITICAL: Sequential processing to avoid Windows paging file issues
+  parallel: false  # Set to false to avoid memory issues
+  n_processes: 1   # Sequential execution
+  
+  # Memory optimization
+  monitor_memory: true
+  clear_cache_after_computation: true
+
+qvae_architecture:
+  latent_dim: 8
+  encoder_layers: [512, 256, 128]
+  decoder_layers: [128, 256, 512]
+  
+training:
+  learning_rate: 0.001
+  batch_size: 32
+  max_epochs: 1000
+  patience: 50
+  beta: 0.1
+  gradient_clip: 1.0
+  n_random_seeds: 3
+  
+  # GPU configuration (if you have NVIDIA GPU)
+  use_gpu: false  # Set to true if you have NVIDIA GPU
+  gpu_id: null
+  
+analysis:
+  bootstrap_samples: 1000
+  correlation_threshold: 0.8
+  significance_level: 0.01
+  
+paths:
+  data_dir: "./data"
+  output_dir: "./output"
+  checkpoint_dir: "./checkpoints"
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "./logs/j1j2_prometheus.log"
+
+# LAPTOP-SPECIFIC NOTES:
+# 
+# Physics & Memory Constraints:
+#   - Lattice sizes must give EVEN total spins for Sz=0 sector
+#   - L=4 (16 spins): ~1-2 GB RAM ✓ Works on laptop
+#   - L=5 (25 spins): Odd number ✗ Physics constraint
+#   - L=6 (36 spins): ~67 GB RAM ✗ Too large for 16 GB laptop
+#   - Using only L=4 for laptop deployment
+#
+# Runtime Estimate (L=4 only):
+#   - ED computation: 1-2 hours (21 parameter points)
+#   - Q-VAE training: 1-2 hours
+#   - Analysis: 30-60 minutes
+#   - Total: 2.5-5 hours
+#
+# Memory Usage:
+#   - Peak: ~4-6 GB (comfortable on 16 GB)
+#   - Sequential processing prevents spikes
+#
+# Scientific Validity:
+#   - Single lattice size limits finite-size scaling
+#   - Still provides valid phase diagram and order parameters
+#   - Critical points can be estimated (with larger uncertainty)
+#   - For publication-quality results, use VM with [4, 6] or [4, 5, 6]
+#
+# Recommendation:
+#   - Use laptop for exploratory analysis and testing
+#   - Use VM/cloud for final publication-quality results
+#
+# Power Management:
+#   - Keep laptop plugged in
+#   - Disable sleep mode during runs
+#   - Ensure adequate cooling
