@@ -776,20 +776,22 @@ class EDModule:
                 tol=tol
             )
             
+            n_total = len(points_to_compute)
+            completed = 0
             with Pool(processes=n_processes) as pool:
-                new_results = pool.map(compute_func, points_to_compute)
-            
-            # Add new results to dictionary
-            for key, state in new_results:
-                results[key] = state
-                
-                # Save checkpoint after each lattice size is complete
-                L = key[1]
-                L_points = [p for p in all_points if p[1] == L]
-                L_computed = [p for p in L_points if p in results]
-                
-                if len(L_computed) == len(L_points):
-                    self._save_checkpoint(results, L)
+                for key, state in pool.imap_unordered(compute_func, points_to_compute, chunksize=1):
+                    results[key] = state
+                    completed += 1
+                    j2_j1, L = key
+                    self.logger.info(
+                        f"ED progress: {completed}/{n_total} — L={L}, j2_j1={j2_j1:.4f}, E={state.energy:.6f}"
+                    )
+                    # Save checkpoint when all points for this L are done
+                    L_points = [p for p in all_points if p[1] == L]
+                    L_computed = [p for p in L_points if p in results]
+                    if len(L_computed) == len(L_points):
+                        self._save_checkpoint(results, L)
+                        self.logger.info(f"Checkpoint saved for L={L} ({len(L_computed)} states)")
         else:
             # Sequential execution
             for j2_j1, L in points_to_compute:

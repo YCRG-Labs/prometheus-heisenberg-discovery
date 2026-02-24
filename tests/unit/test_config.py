@@ -20,9 +20,9 @@ class TestEDParameters:
     """Test ED parameter validation"""
     
     def test_valid_lattice_sizes(self):
-        """Test valid lattice sizes are accepted"""
-        params = EDParameters(lattice_sizes=[4, 5, 6])
-        assert params.lattice_sizes == [4, 5, 6]
+        """Test valid lattice sizes are accepted (only even L with Sz=0 sector: 4, 6)"""
+        params = EDParameters(lattice_sizes=[4, 6])
+        assert params.lattice_sizes == [4, 6]
     
     def test_invalid_lattice_size(self):
         """Test invalid lattice size raises error"""

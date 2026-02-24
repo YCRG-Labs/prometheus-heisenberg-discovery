@@ -542,24 +542,29 @@ class CriticalPointDetection:
     - Consistency checking across methods
     """
     
-    def __init__(self, config: Any, qvae_module: Any):
+    def __init__(self, config: Any, qvae_module: Optional[Any] = None):
         """Initialize CriticalPointDetection
         
         Args:
             config: Configuration object
-            qvae_module: QVAEModule instance with trained models
+            qvae_module: Optional QVAEModule instance with trained models.
+                If None, reconstruction_error method is skipped (latent_variance and
+                fidelity_susceptibility still run).
         """
         self.config = config
         self.qvae_module = qvae_module
         
-        # Initialize detection methods
+        # Initialize detection methods (reconstruction_error needs qvae_module)
         self.methods = {
             'latent_variance': LatentVarianceMethod(),
-            'reconstruction_error': ReconstructionErrorMethod(qvae_module),
             'fidelity_susceptibility': FidelitySusceptibilityMethod(),
         }
+        if qvae_module is not None:
+            self.methods['reconstruction_error'] = ReconstructionErrorMethod(qvae_module)
         
-        logger.info("Initialized CriticalPointDetection with 3 methods")
+        logger.info(
+            f"Initialized CriticalPointDetection with {len(self.methods)} methods"
+        )
     
     def detect_all_methods(
         self,
@@ -590,14 +595,15 @@ class CriticalPointDetection:
         except Exception as e:
             logger.warning(f"Latent variance method failed: {e}")
         
-        # Reconstruction error method
-        try:
-            j2_j1_c, uncertainty = self.methods['reconstruction_error'].detect_critical_point(
-                states
-            )
-            detections['reconstruction_error'] = (j2_j1_c, uncertainty)
-        except Exception as e:
-            logger.warning(f"Reconstruction error method failed: {e}")
+        # Reconstruction error method (only if qvae_module was provided)
+        if 'reconstruction_error' in self.methods:
+            try:
+                j2_j1_c, uncertainty = self.methods['reconstruction_error'].detect_critical_point(
+                    states
+                )
+                detections['reconstruction_error'] = (j2_j1_c, uncertainty)
+            except Exception as e:
+                logger.warning(f"Reconstruction error method failed: {e}")
         
         # Fidelity susceptibility method
         try:
@@ -608,7 +614,9 @@ class CriticalPointDetection:
         except Exception as e:
             logger.warning(f"Fidelity susceptibility method failed: {e}")
         
-        logger.info(f"Successfully applied {len(detections)}/3 detection methods")
+        logger.info(
+            f"Successfully applied {len(detections)}/{len(self.methods)} detection methods"
+        )
         
         return detections
     

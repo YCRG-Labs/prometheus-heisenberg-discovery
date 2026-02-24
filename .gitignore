@@ -222,4 +222,10 @@ LAPTOP_ANALYSIS_COMPLETE
 VM_SETUP_COMPLETE.md
 READY_TO_RUN.md
 
+# Local run artifacts / backups
+analysis_progress.json
+ANALYSIS_COMPLETE
+*.tar.gz
+
 /paper/
+/docs/

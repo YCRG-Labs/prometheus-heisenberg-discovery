@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 class EDParameters(BaseModel):
     """Exact diagonalization parameters"""
-    lattice_sizes: List[int] = Field(default=[4, 5, 6])
+    lattice_sizes: List[int] = Field(default=[4, 6])
     j2_j1_min: float = Field(default=0.3, ge=0.0, le=1.0)
     j2_j1_max: float = Field(default=0.7, ge=0.0, le=1.0)
     j2_j1_step: float = Field(default=0.01, gt=0.0)
@@ -25,7 +25,7 @@ class EDParameters(BaseModel):
     @classmethod
     def validate_lattice_sizes(cls, v):
         """Validate lattice sizes are in acceptable range"""
-        valid_sizes = {4, 5, 6}
+        valid_sizes = {4, 6}
         for size in v:
             if size not in valid_sizes:
                 raise ValueError(f"Lattice size {size} not in {valid_sizes}")

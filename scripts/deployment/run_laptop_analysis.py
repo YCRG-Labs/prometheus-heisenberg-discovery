@@ -27,6 +27,12 @@ import json
 import pandas as pd
 import numpy as np
 
+# Ensure project root is on path when run as script
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _SCRIPT_DIR.parents[1]  # scripts/deployment -> repo root
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import torch
 
 from src.config import Config

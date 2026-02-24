@@ -75,14 +75,19 @@ class CorrelationAnalysis:
         if not np.all(np.isfinite(y)):
             raise ValueError("y contains NaN or Inf values")
         
+        # Constant array => correlation undefined; return 0 and p=1 to avoid nan
+        if np.var(x) < 1e-14 or np.var(y) < 1e-14:
+            return 0.0, 1.0
+        
         # Compute Pearson correlation using scipy
         r, p_value = stats.pearsonr(x, y)
+        r, p_value = float(r), float(p_value)
         
-        # Validate output
-        if not (-1 <= r <= 1):
-            logger.warning(f"Correlation coefficient {r} outside [-1, 1] bounds")
+        # Handle scipy returning nan for edge cases
+        if not np.isfinite(r) or not (-1 <= r <= 1):
+            r, p_value = 0.0, 1.0
         
-        return float(r), float(p_value)
+        return r, p_value
     
     def compute_correlation_matrix(self,
                                    latent_data: pd.DataFrame,
@@ -110,11 +115,21 @@ class CorrelationAnalysis:
             raise ValueError("No latent dimension columns (z_*) found in latent_data")
         
         # Pivot observable data to wide format if needed
+        # Support both 'observable_name' (generic) and 'observable' (from ObservableModule)
         if 'observable_name' in observable_data.columns and 'value' in observable_data.columns:
+            name_col = 'observable_name'
+        elif 'observable' in observable_data.columns and 'value' in observable_data.columns:
+            # Adapt to ObservableModule output
+            observable_data = observable_data.rename(columns={'observable': 'observable_name'})
+            name_col = 'observable_name'
+        else:
+            name_col = None
+
+        if name_col is not None:
             # Long format - pivot to wide
             obs_wide = observable_data.pivot_table(
                 index=['j2_j1', 'L'],
-                columns='observable_name',
+                columns=name_col,
                 values='value'
             ).reset_index()
         else:
@@ -416,10 +431,19 @@ class OrderParameterDiscovery:
         significant = []
         
         # Merge data for statistical tests
+        # Support both 'observable_name' and 'observable' long formats
         if 'observable_name' in observables.columns and 'value' in observables.columns:
+            name_col = 'observable_name'
+        elif 'observable' in observables.columns and 'value' in observables.columns:
+            observables = observables.rename(columns={'observable': 'observable_name'})
+            name_col = 'observable_name'
+        else:
+            name_col = None
+
+        if name_col is not None:
             obs_wide = observables.pivot_table(
                 index=['j2_j1', 'L'],
-                columns='observable_name',
+                columns=name_col,
                 values='value'
             ).reset_index()
         else:

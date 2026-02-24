@@ -544,6 +544,42 @@ class DataStorage:
                 f"Failed to load Q-VAE model for L={L}: {e}"
             ) from e
     
+    def save_analysis_results(
+        self,
+        data: Any,
+        filename: str
+    ) -> None:
+        """Save analysis results (e.g. order params, critical points) to JSON in output_dir.
+
+        Args:
+            data: Serializable dict/list (tuples converted to lists for JSON).
+            filename: Filename under output_dir (e.g. 'critical_points.json').
+        """
+        out = self.output_dir / filename
+        try:
+            def _to_serializable(obj: Any) -> Any:
+                if isinstance(obj, dict):
+                    return {k: _to_serializable(v) for k, v in obj.items()}
+                if isinstance(obj, (list, tuple)):
+                    return [_to_serializable(x) for x in obj]
+                if hasattr(obj, 'to_dict') and callable(getattr(obj, 'to_dict')):
+                    return _to_serializable(obj.to_dict())
+                if hasattr(obj, 'tolist') and callable(getattr(obj, 'tolist')):
+                    return obj.tolist()
+                if isinstance(obj, (np.integer, np.floating, np.bool_)):
+                    return obj.item()
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                if hasattr(obj, "__dict__"):
+                    # Fallback for simple result/validation objects
+                    return _to_serializable(vars(obj))
+                return obj
+            with open(out, 'w') as f:
+                json.dump(_to_serializable(data), f, indent=2)
+            self.logger.info(f"Saved analysis results: {out}")
+        except Exception as e:
+            raise IOError(f"Failed to save analysis results to {out}: {e}") from e
+
     def save_metadata(
         self,
         key: str,

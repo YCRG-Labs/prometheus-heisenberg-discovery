@@ -1092,7 +1092,16 @@ class QVAEModule:
                 z = model.encode(x)
             
             # Convert to numpy and remove batch dimension
-            z_np = z.cpu().numpy().squeeze(0)
+            z_cpu = z.detach().cpu()
+            try:
+                z_np = z_cpu.numpy().squeeze(0)
+            except RuntimeError as exc:
+                # Fallback path for environments where Torch's NumPy interop
+                # is unavailable (e.g. NumPy 2.x with binaries built against 1.x)
+                if "Numpy is not available" in str(exc):
+                    z_np = np.asarray(z_cpu.tolist(), dtype=np.float32).squeeze(0)
+                else:
+                    raise
             
             latent_reps[(j2_j1, L)] = z_np
         
