@@ -20,10 +20,41 @@ Scripts for running the analysis pipeline on different platforms.
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
+| `generate_groundstates.py` | DMRG ground state generation (VM) | `python scripts/deployment/generate_groundstates.py --L 6` |
+| `train_vae.py` | VAE training from HDF5 (local) | `python scripts/deployment/train_vae.py --input groundstates_L6.h5` |
 | `run_laptop_analysis.py` | Laptop-optimized analysis | `python scripts/deployment/run_laptop_analysis.py --stage all` |
 | `run_vm_analysis.py` | VM/cloud deployment | `python scripts/deployment/run_vm_analysis.py --stage all` |
 | `run_sequential_analysis.py` | Memory-constrained execution | `python scripts/deployment/run_sequential_analysis.py` |
 | `run_ed_only.py` | ED-only (no GPU libraries) | `python scripts/deployment/run_ed_only.py` |
+
+### Split VM/Local Workflow (Recommended for L≥6)
+
+For larger lattice sizes (L=6+), use the split workflow:
+
+1. **On VM**: Generate ground states with DMRG/ITensor
+   ```bash
+   python scripts/deployment/generate_groundstates.py --L 6 --bond_dim 200
+   ```
+   Output: `results/groundstates/groundstates_L6.h5`
+
+2. **Transfer**: Download HDF5 file from VM to local machine
+
+3. **Locally**: Train VAE and run analysis
+   ```bash
+   python scripts/deployment/train_vae.py --input groundstates_L6.h5
+   ```
+
+The HDF5 file contains:
+- Ground state wavefunctions (or MPS coefficients)
+- Precomputed observables (all 11)
+- Energy values
+- Metadata (bond dimension, timestamps)
+
+This separation allows:
+- Heavy DMRG computation on VM with Julia/ITensor
+- VAE training locally with GPU
+- Checkpointing at the HDF5 boundary
+- Easy resumption if VM connection drops
 
 ### Setup Scripts
 
@@ -135,7 +166,21 @@ python scripts/validation/validate_setup.py
 python scripts/validation/test_laptop_setup.py
 ```
 
-### Running Analysis
+### Split Workflow (L≥6, Recommended)
+
+```bash
+# On VM: Generate ground states
+python scripts/deployment/generate_groundstates.py --L 6 --n_points 41
+
+# Download groundstates_L6.h5 from VM
+
+# Locally: Train VAE
+python scripts/deployment/train_vae.py --input groundstates_L6.h5
+
+# Continue with analysis using the trained model
+```
+
+### Running Analysis (L=4, QuSpin)
 
 ```bash
 # Laptop

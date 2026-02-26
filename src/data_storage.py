@@ -699,3 +699,181 @@ class DataStorage:
             info['n_qvae_checkpoints'] = len(list(checkpoint_dir.glob("qvae_L*.pt")))
         
         return info
+
+
+    def load_groundstates_from_dmrg_hdf5(
+        self,
+        filepath: Path
+    ) -> Dict[Tuple[float, int], Any]:
+        """Load ground states from DMRG-generated HDF5 file.
+        
+        This loads ground states from the HDF5 format produced by
+        generate_groundstates.py (DMRG/ITensor backend).
+        
+        The file format has groups named "J2_{j2_val:.3f}" containing:
+        - psi: wavefunction coefficients
+        - energy: ground state energy
+        - observables: array of 11 observable values
+        - attrs: j2_j1, L, chi, etc.
+        
+        Args:
+            filepath: Path to HDF5 file (e.g., groundstates_L6.h5)
+            
+        Returns:
+            Dictionary mapping (j2_j1, L) -> GroundState-like dict with:
+            - coefficients: wavefunction array
+            - energy: float
+            - observables: array of 11 values
+            - L: lattice size
+            - j2_j1: frustration ratio
+            - metadata: dict with chi, timestamp, etc.
+            
+        Raises:
+            FileNotFoundError: If file doesn't exist
+            IOError: If HDF5 read fails
+        """
+        filepath = Path(filepath)
+        
+        if not filepath.exists():
+            raise FileNotFoundError(f"DMRG HDF5 file not found: {filepath}")
+        
+        states = {}
+        
+        try:
+            with h5py.File(filepath, 'r') as f:
+                for key in sorted(f.keys()):
+                    grp = f[key]
+                    
+                    j2_j1 = float(grp.attrs['j2_j1'])
+                    L = int(grp.attrs['L'])
+                    
+                    # Load data
+                    psi = grp['psi'][:]
+                    energy = float(grp['energy'][()])
+                    observables = grp['observables'][:]
+                    
+                    # Build metadata
+                    metadata = {
+                        'chi': int(grp.attrs.get('chi', 0)),
+                        'timestamp': grp.attrs.get('timestamp', 'unknown'),
+                        'hilbert_dim': len(psi),
+                        'source': 'dmrg_hdf5'
+                    }
+                    
+                    # Get observable names if available
+                    if 'observable_names' in grp.attrs:
+                        obs_names = list(grp.attrs['observable_names'])
+                        metadata['observable_names'] = obs_names
+                    
+                    states[(j2_j1, L)] = {
+                        'coefficients': psi,
+                        'energy': energy,
+                        'observables': observables,
+                        'L': L,
+                        'j2_j1': j2_j1,
+                        'metadata': metadata
+                    }
+            
+            self.logger.info(
+                f"Loaded {len(states)} ground states from DMRG HDF5: {filepath}"
+            )
+            
+            return states
+            
+        except Exception as e:
+            raise IOError(
+                f"Failed to load DMRG HDF5 file {filepath}: {e}"
+            ) from e
+    
+    def convert_dmrg_to_internal_format(
+        self,
+        dmrg_filepath: Path
+    ) -> None:
+        """Convert DMRG HDF5 file to internal storage format.
+        
+        Loads ground states from DMRG-generated HDF5 and saves them
+        to the internal j1j2_data.h5 format for use with the rest
+        of the pipeline.
+        
+        Args:
+            dmrg_filepath: Path to DMRG HDF5 file
+            
+        Raises:
+            FileNotFoundError: If file doesn't exist
+            IOError: If conversion fails
+        """
+        from src.ed_module import GroundState
+        
+        # Load from DMRG format
+        dmrg_states = self.load_groundstates_from_dmrg_hdf5(dmrg_filepath)
+        
+        # Convert and save each state
+        for (j2_j1, L), state_data in dmrg_states.items():
+            # Create GroundState object
+            ground_state = GroundState(
+                coefficients=state_data['coefficients'],
+                energy=state_data['energy'],
+                basis=None,  # Not available from DMRG
+                j2_j1=j2_j1,
+                L=L,
+                metadata=state_data['metadata']
+            )
+            
+            # Save to internal format
+            self.save_ground_state(ground_state, j2_j1, L)
+        
+        self.logger.info(
+            f"Converted {len(dmrg_states)} states from DMRG format to internal storage"
+        )
+    
+    def get_precomputed_observables_from_dmrg(
+        self,
+        dmrg_filepath: Path
+    ) -> pd.DataFrame:
+        """Extract precomputed observables from DMRG HDF5 file.
+        
+        The DMRG file contains observables computed during the sweep.
+        This extracts them into a DataFrame compatible with the rest
+        of the pipeline.
+        
+        Args:
+            dmrg_filepath: Path to DMRG HDF5 file
+            
+        Returns:
+            DataFrame with columns: j2_j1, L, and all observable names
+            
+        Raises:
+            FileNotFoundError: If file doesn't exist
+            IOError: If extraction fails
+        """
+        dmrg_states = self.load_groundstates_from_dmrg_hdf5(dmrg_filepath)
+        
+        # Default observable names
+        default_obs_names = [
+            'energy', 'energy_density', 'staggered_magnetization',
+            'stripe_order', 'plaquette_order', 'S_pi_pi', 'S_pi_0',
+            'entanglement_entropy', 'nematic_order', 'dimer_order_x', 'dimer_order_y'
+        ]
+        
+        rows = []
+        for (j2_j1, L), state_data in sorted(dmrg_states.items()):
+            row = {'j2_j1': j2_j1, 'L': L}
+            
+            # Get observable names
+            obs_names = state_data['metadata'].get('observable_names', default_obs_names)
+            observables = state_data['observables']
+            
+            # Add each observable
+            for i, name in enumerate(obs_names):
+                if i < len(observables):
+                    row[name] = observables[i]
+            
+            rows.append(row)
+        
+        df = pd.DataFrame(rows)
+        
+        self.logger.info(
+            f"Extracted {len(df)} observable rows from DMRG HDF5"
+        )
+        
+        return df
