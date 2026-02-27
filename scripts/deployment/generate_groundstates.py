@@ -121,56 +121,81 @@ def run_dmrg_itensor(
 ) -> Tuple[np.ndarray, float, np.ndarray]:
     """Run DMRG using ITensor (via Julia) for a single J2/J1 point.
     
-    This is a placeholder that shows the expected interface.
-    In production, this would call Julia/ITensor via PyJulia or subprocess.
+    Calls the Julia script j1j2_dmrg.jl via subprocess.
+    
+    Note: For L>=6, we don't store the full wavefunction (too large).
+    Instead we store observables computed during DMRG. The VAE training
+    for L>=6 will need to use observables directly, not wavefunctions.
     
     Args:
         L: Lattice size
         j2_j1: Frustration ratio J2/J1
         bond_dim: Maximum bond dimension (chi)
-        sweeps: Number of DMRG sweeps
-        cutoff: SVD cutoff for truncation
+        sweeps: Number of DMRG sweeps (not used, hardcoded in Julia)
+        cutoff: SVD cutoff for truncation (not used, hardcoded in Julia)
         
     Returns:
         Tuple of (psi_array, energy, observables)
-        - psi_array: Wavefunction coefficients (or MPS representation)
+        - psi_array: Dummy array (MPS too large to store as vector)
         - energy: Ground state energy
         - observables: Array of 11 observable values
     """
-    # PLACEHOLDER: Replace with actual ITensor/Julia call
-    # 
-    # Example Julia code that would be called:
-    # ```julia
-    # using ITensors
-    # 
-    # function run_j1j2_dmrg(L, j2_j1; bond_dim=200, sweeps=20, cutoff=1e-10)
-    #     N = L * L
-    #     sites = siteinds("S=1/2", N)
-    #     
-    #     # Build J1-J2 Hamiltonian on square lattice
-    #     ampo = OpSum()
-    #     # ... add J1 and J2 terms ...
-    #     H = MPO(ampo, sites)
-    #     
-    #     # Initial state
-    #     psi0 = randomMPS(sites; linkdims=10)
-    #     
-    #     # DMRG
-    #     sweeps = Sweeps(sweeps)
-    #     setmaxdim!(sweeps, bond_dim)
-    #     setcutoff!(sweeps, cutoff)
-    #     
-    #     energy, psi = dmrg(H, psi0, sweeps)
-    #     
-    #     return psi, energy
-    # end
-    # ```
+    import subprocess
+    import tempfile
     
-    raise NotImplementedError(
-        "ITensor/DMRG backend not implemented. "
-        "Replace this with your Julia/ITensor integration. "
-        "For L=4, you can still use the QuSpin backend in ed_module.py"
-    )
+    # Path to Julia script
+    julia_script = Path(__file__).parent / "j1j2_dmrg.jl"
+    
+    if not julia_script.exists():
+        raise FileNotFoundError(f"Julia script not found: {julia_script}")
+    
+    # Create temp file for output
+    with tempfile.NamedTemporaryFile(suffix=".h5", delete=False) as tmp:
+        tmp_output = tmp.name
+    
+    try:
+        # Run Julia DMRG
+        cmd = [
+            "julia",
+            "--project=@.",
+            str(julia_script),
+            str(L),
+            f"{j2_j1:.6f}",
+            str(bond_dim),
+            tmp_output
+        ]
+        
+        logging.info(f"Running: {' '.join(cmd)}")
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=7200  # 2 hour timeout per point
+        )
+        
+        if result.returncode != 0:
+            logging.error(f"Julia DMRG stdout:\n{result.stdout}")
+            logging.error(f"Julia DMRG stderr:\n{result.stderr}")
+            raise RuntimeError(f"Julia DMRG failed with code {result.returncode}")
+        
+        # Log Julia output
+        if result.stdout:
+            for line in result.stdout.strip().split('\n'):
+                logging.info(f"[Julia] {line}")
+        
+        # Read results from temp HDF5
+        with h5py.File(tmp_output, 'r') as f:
+            energy = float(f['energy'][()])
+            observables = f['observables'][:]
+            psi = f['psi'][:]  # Dummy array for L>=6
+        
+        return psi, energy, observables
+        
+    finally:
+        # Clean up temp file
+        if os.path.exists(tmp_output):
+            os.remove(tmp_output)
 
 
 def run_quspin_fallback(
