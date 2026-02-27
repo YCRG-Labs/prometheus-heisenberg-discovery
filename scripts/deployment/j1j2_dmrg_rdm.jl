@@ -14,8 +14,11 @@ using ITensorMPS
 using HDF5
 using LinearAlgebra
 
-# Enable threading for ITensors
+# Configure threading properly for ITensors block sparse
+BLAS.set_num_threads(1)
 ITensors.enable_threaded_blocksparse()
+using NDTensors
+NDTensors.Strided.disable_threads()
 
 function site_to_index(ix::Int, iy::Int, L::Int)::Int
     return (iy - 1) * L + ix
