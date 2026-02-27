@@ -10,6 +10,7 @@ Example:
 """
 
 using ITensors
+using ITensors.ITensorMPS
 using HDF5
 using LinearAlgebra
 
