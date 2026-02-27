@@ -79,53 +79,9 @@ function build_j1j2_hamiltonian(sites, L::Int, j2_j1::Float64)
     return MPO(ampo, sites)
 end
 
-function measure_sz(psi::MPS, sites, i::Int)::Float64
+function measure_sz(psi::MPS, i::Int)::Float64
     """Measure <Sz> at site i."""
-    orthogonalize!(psi, i)
-    s = siteind(psi, i)
-    val = scalar(dag(prime(psi[i], s)) * op("Sz", s) * psi[i])
-    return real(val)
-end
-
-function measure_correlation(psi::MPS, sites, op1::String, op2::String, i::Int, j::Int)::Float64
-    """Measure <op1_i op2_j> correlation."""
-    if i == j
-        orthogonalize!(psi, i)
-        s = siteind(psi, i)
-        # For same site, need op1*op2
-        if op1 == "Sz" && op2 == "Sz"
-            return 0.25  # <Sz^2> = 1/4 for S=1/2
-        end
-        return 0.0
-    end
-    
-    # Ensure i < j
-    if i > j
-        i, j = j, i
-    end
-    
-    orthogonalize!(psi, i)
-    
-    # Build correlation
-    si = siteind(psi, i)
-    Li = psi[i] * op(op1, si)
-    Li = noprime(Li)
-    
-    for k in (i+1):(j-1)
-        Li *= psi[k]
-    end
-    
-    sj = siteind(psi, j)
-    Lj = Li * psi[j]
-    Lj = Lj * op(op2, sj)
-    Lj = noprime(Lj)
-    
-    # Contract with bra
-    for k in i:j
-        Lj = Lj * dag(prime(psi[k], "Link"))
-    end
-    
-    return real(scalar(Lj))
+    return expect(psi, "Sz"; sites=i)[1]
 end
 
 function compute_observables(psi::MPS, sites, L::Int, energy::Float64)::Vector{Float64}
@@ -140,68 +96,69 @@ function compute_observables(psi::MPS, sites, L::Int, energy::Float64)::Vector{F
     observables[2] = energy / N
     
     # 3. Staggered magnetization
+    sz_vals = expect(psi, "Sz")
     stag_mag = 0.0
     for iy in 1:L
         for ix in 1:L
             i = site_to_index(ix, iy, L)
             sign = (-1.0)^(ix + iy)
-            sz_i = measure_sz(psi, sites, i)
-            stag_mag += sign * sz_i
+            stag_mag += sign * sz_vals[i]
         end
     end
     observables[3] = abs(stag_mag) / N
     
-    # 4. Stripe order (placeholder - needs proper implementation)
+    # 4. Stripe order (placeholder)
     observables[4] = 0.0
     
     # 5. Plaquette order (placeholder)
     observables[5] = 0.0
     
-    # 6. S(π,π) structure factor - simplified version using local correlations
-    # Full calculation is expensive, use nearest-neighbor approximation
+    # 6. S(π,π) structure factor using correlation_matrix
+    # S(q) = (1/N) Σ_ij exp(iq·(ri-rj)) <Sz_i Sz_j>
+    zz_corr = correlation_matrix(psi, "Sz", "Sz")
     s_pi_pi = 0.0
-    for iy in 1:L
-        for ix in 1:L
-            i = site_to_index(ix, iy, L)
-            # Self term
-            s_pi_pi += 0.25  # <Sz_i^2> = 1/4
-            
-            # Right neighbor
-            jx = mod1(ix + 1, L)
-            j = site_to_index(jx, iy, L)
-            corr = measure_correlation(psi, sites, "Sz", "Sz", i, j)
-            s_pi_pi += (-1.0) * corr  # phase = -1 for NN at q=(π,π)
-            
-            # Up neighbor  
-            jy = mod1(iy + 1, L)
-            j = site_to_index(ix, jy, L)
-            corr = measure_correlation(psi, sites, "Sz", "Sz", i, j)
-            s_pi_pi += (-1.0) * corr
+    for iy1 in 1:L, ix1 in 1:L
+        i = site_to_index(ix1, iy1, L)
+        for iy2 in 1:L, ix2 in 1:L
+            j = site_to_index(ix2, iy2, L)
+            # Phase factor for q=(π,π)
+            phase = (-1.0)^((ix1 - ix2) + (iy1 - iy2))
+            s_pi_pi += phase * zz_corr[i, j]
         end
     end
     observables[6] = abs(s_pi_pi) / N
     
-    # 7. S(π,0) (placeholder)
-    observables[7] = 0.0
+    # 7. S(π,0)
+    s_pi_0 = 0.0
+    for iy1 in 1:L, ix1 in 1:L
+        i = site_to_index(ix1, iy1, L)
+        for iy2 in 1:L, ix2 in 1:L
+            j = site_to_index(ix2, iy2, L)
+            # Phase factor for q=(π,0)
+            phase = (-1.0)^(ix1 - ix2)
+            s_pi_0 += phase * zz_corr[i, j]
+        end
+    end
+    observables[7] = abs(s_pi_0) / N
     
     # 8. Entanglement entropy at middle bond
     mid = N ÷ 2
-    orthogonalize!(psi, mid)
-    
-    if mid > 1
-        linds = commoninds(psi[mid-1], psi[mid])
-        if length(linds) > 0
-            _, S, _ = svd(psi[mid], linds)
-            SvN = 0.0
+    SvN = 0.0
+    try
+        orthogonalize!(psi, mid)
+        if mid > 1 && mid < N
+            U, S, V = svd(psi[mid], (linkind(psi, mid - 1),))
             for n in 1:dim(S, 1)
                 p = S[n, n]^2
                 if p > 1e-14
                     SvN -= p * log(p)
                 end
             end
-            observables[8] = SvN
         end
+    catch e
+        println("Warning: Could not compute entanglement entropy: $e")
     end
+    observables[8] = SvN
     
     # 9-11: Nematic and dimer orders (placeholder)
     observables[9] = 0.0
