@@ -147,7 +147,22 @@ def load_rdm_data(filepath: str) -> Tuple[np.ndarray, np.ndarray, int]:
             
             grp = f[key]
             rdm_features = grp['rdm_features'][:]
-            j2_j1 = grp.attrs['j2_j1']
+            
+            # Robustly determine j2_j1:
+            # 1) Prefer group attribute "j2_j1" if present
+            # 2) Fall back to dataset "j2_j1" inside the group
+            # 3) Finally, parse it from the group name "J2_<value>"
+            if 'j2_j1' in grp.attrs:
+                j2_j1 = grp.attrs['j2_j1']
+            elif 'j2_j1' in grp:
+                j2_j1 = grp['j2_j1'][()]
+            else:
+                try:
+                    j2_j1 = float(key.split('_', 1)[1])
+                except Exception as exc:  # noqa: BLE001
+                    raise KeyError(
+                        f"Could not determine j2_j1 for group '{key}' in {filepath}"
+                    ) from exc
             
             features_list.append(rdm_features)
             j2_values.append(j2_j1)
@@ -264,9 +279,13 @@ def encode_all_states(
     
     with torch.no_grad():
         for i, j2 in enumerate(j2_values):
-            x = torch.from_numpy(features[i:i+1]).to(device)
+            # Avoid torch.from_numpy to work around environments where
+            # Torch's NumPy bridge is disabled; go via Python lists instead.
+            x_np = features[i : i + 1]
+            x = torch.tensor(x_np.tolist(), dtype=torch.float32, device=device)
             z = model.encode(x)
-            latent_reps[float(j2)] = z.cpu().numpy().squeeze()
+            # Also avoid tensor.numpy() which relies on Torch's NumPy bridge.
+            latent_reps[float(j2)] = np.asarray(z.detach().cpu().tolist(), dtype=np.float32).squeeze()
     
     return latent_reps
 
@@ -320,7 +339,9 @@ def main():
     logger.info(f"Created RDM_VAE: input_dim={feature_dim}, latent_dim={args.latent_dim}")
     
     # Prepare data
-    dataset = TensorDataset(torch.from_numpy(features))
+    # Avoid torch.from_numpy to be robust when Torch's NumPy bridge is disabled.
+    features_tensor = torch.tensor(features.tolist(), dtype=torch.float32)
+    dataset = TensorDataset(features_tensor)
     n_train = int(0.8 * len(dataset))
     n_val = len(dataset) - n_train
     train_dataset, val_dataset = random_split(
