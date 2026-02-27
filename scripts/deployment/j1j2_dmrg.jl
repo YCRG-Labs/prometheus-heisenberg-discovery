@@ -10,9 +10,11 @@ Example:
 """
 
 using ITensors
-using ITensors.ITensorMPS
 using HDF5
 using LinearAlgebra
+
+# Import MPS functions explicitly if needed
+import ITensors: MPS, MPO, dmrg, siteinds, OpSum, op, siteind, orthogonalize!, maxlinkdim, linkind, commoninds
 
 function site_to_index(ix::Int, iy::Int, L::Int)::Int
     return (iy - 1) * L + ix
