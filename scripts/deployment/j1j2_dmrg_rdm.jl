@@ -74,144 +74,19 @@ function build_j1j2_hamiltonian(sites, L::Int, j2_j1::Float64)
     return MPO(ampo, sites)
 end
 
-function compute_two_site_rdm(psi::MPS, i::Int, j::Int)::Matrix{ComplexF64}
-    """Compute 2-site reduced density matrix ρ_ij as 4x4 matrix."""
-    if i > j
-        i, j = j, i
-    end
-    
-    N = length(psi)
-    
-    # For adjacent sites, use direct contraction
-    # For non-adjacent, need more careful handling
-    orthogonalize!(psi, i)
-    
-    # Build the reduced density matrix
-    # ρ_ij = Tr_{k≠i,j} |ψ⟩⟨ψ|
-    
-    # Contract everything to the left of i
-    if i > 1
-        L_env = psi[1] * dag(prime(psi[1], "Link"))
-        for k in 2:(i-1)
-            L_env = L_env * psi[k] * dag(prime(psi[k], "Link"))
-        end
-    else
-        L_env = ITensor(1.0)
-    end
-    
-    # Contract everything to the right of j
-    if j < N
-        R_env = psi[N] * dag(prime(psi[N], "Link"))
-        for k in (N-1):-1:(j+1)
-            R_env = psi[k] * dag(prime(psi[k], "Link")) * R_env
-        end
-    else
-        R_env = ITensor(1.0)
-    end
-    
-    # Contract sites between i and j (excluding i and j)
-    M_env = ITensor(1.0)
-    for k in (i+1):(j-1)
-        M_env = M_env * psi[k] * dag(prime(psi[k], "Link"))
-    end
-    
-    # Build ρ_ij
-    si = siteind(psi, i)
-    sj = siteind(psi, j)
-    
-    # Contract: L_env * psi[i] * M_env * psi[j] * R_env * dag(psi[i]') * dag(psi[j]')
-    rho_tensor = L_env * psi[i]
-    if i + 1 < j
-        rho_tensor = rho_tensor * M_env
-    end
-    rho_tensor = rho_tensor * psi[j] * R_env
-    rho_tensor = rho_tensor * dag(prime(psi[i], si))
-    if i + 1 < j
-        # Need to handle intermediate links
-        for k in (i+1):(j-1)
-            rho_tensor = rho_tensor * dag(prime(psi[k], "Link"))
-        end
-    end
-    rho_tensor = rho_tensor * dag(prime(psi[j], sj))
-    
-    # Convert to 4x4 matrix
-    # Basis: |00⟩, |01⟩, |10⟩, |11⟩ (0=down, 1=up)
-    rdm = zeros(ComplexF64, 4, 4)
-    
-    for a in 1:2, b in 1:2, c in 1:2, d in 1:2
-        row = (a-1) * 2 + b
-        col = (c-1) * 2 + d
-        rdm[row, col] = rho_tensor[si => a, si' => c, sj => b, sj' => d]
-    end
-    
-    return rdm
-end
-
-function compute_single_site_rdm(psi::MPS, i::Int)::Matrix{ComplexF64}
-    """Compute single-site RDM as 2x2 matrix."""
-    orthogonalize!(psi, i)
-    
-    si = siteind(psi, i)
-    rho_tensor = psi[i] * dag(prime(psi[i], si))
-    
-    rdm = zeros(ComplexF64, 2, 2)
-    for a in 1:2, b in 1:2
-        rdm[a, b] = rho_tensor[si => a, si' => b]
-    end
-    
-    return rdm
-end
-
-function compute_nn_rdms(psi::MPS, L::Int)::Vector{Matrix{ComplexF64}}
-    """Compute all nearest-neighbor 2-site RDMs."""
-    N = L * L
-    rdms = Matrix{ComplexF64}[]
-    
-    for iy in 1:L
-        for ix in 1:L
-            i = site_to_index(ix, iy, L)
-            
-            # Right neighbor
-            jx = mod1(ix + 1, L)
-            j = site_to_index(jx, iy, L)
-            if j > i  # Avoid duplicates
-                push!(rdms, compute_two_site_rdm(psi, i, j))
-            end
-            
-            # Up neighbor
-            jy = mod1(iy + 1, L)
-            j = site_to_index(ix, jy, L)
-            if j > i
-                push!(rdms, compute_two_site_rdm(psi, i, j))
-            end
-        end
-    end
-    
-    return rdms
-end
-
-function rdms_to_vector(rdms::Vector{Matrix{ComplexF64}})::Vector{Float64}
-    """Flatten RDMs to real vector for VAE input."""
-    # Each 4x4 complex RDM -> 32 real numbers (16 real + 16 imag)
-    vec = Float64[]
-    for rdm in rdms
-        for val in rdm
-            push!(vec, real(val))
-            push!(vec, imag(val))
-        end
-    end
-    return vec
-end
-
-function compute_observables(psi::MPS, sites, L::Int, energy::Float64)::Vector{Float64}
+function compute_features(psi::MPS, sites, L::Int, energy::Float64)::Tuple{Vector{Float64}, Vector{Float64}}
+    """Compute RDM-based features and observables from MPS ground state."""
     N = L * L
     observables = zeros(Float64, 11)
     
+    # Observables
     observables[1] = energy
     observables[2] = energy / N
     
-    # Staggered magnetization
+    # Single-site expectations
     sz_vals = expect(psi, "Sz")
+    
+    # Staggered magnetization
     stag_mag = 0.0
     for iy in 1:L
         for ix in 1:L
@@ -222,7 +97,7 @@ function compute_observables(psi::MPS, sites, L::Int, energy::Float64)::Vector{F
     end
     observables[3] = abs(stag_mag) / N
     
-    # Structure factors
+    # Correlation matrix for structure factors
     zz_corr = correlation_matrix(psi, "Sz", "Sz")
     
     s_pi_pi = 0.0
@@ -259,14 +134,37 @@ function compute_observables(psi::MPS, sites, L::Int, energy::Float64)::Vector{F
     end
     observables[8] = SvN
     
-    return observables
+    # Build feature vector from:
+    # 1. Single-site <Sz> values (N values)
+    # 2. Flattened correlation matrix (N*N values, but use upper triangle = N*(N+1)/2)
+    # 3. Key observables
+    
+    features = Float64[]
+    
+    # Single-site Sz
+    append!(features, sz_vals)
+    
+    # Upper triangle of correlation matrix (includes diagonal)
+    for i in 1:N
+        for j in i:N
+            push!(features, zz_corr[i, j])
+        end
+    end
+    
+    # Add key observables as features
+    push!(features, observables[3])  # staggered mag
+    push!(features, observables[6])  # S(pi,pi)
+    push!(features, observables[7])  # S(pi,0)
+    push!(features, observables[8])  # entanglement entropy
+    
+    return features, observables
 end
 
 function run_dmrg_rdm(L::Int, j2_j1::Float64, bond_dim::Int, output_file::String)
     N = L * L
     
     println("=" ^ 60)
-    println("J1-J2 DMRG with RDM extraction")
+    println("J1-J2 DMRG with feature extraction")
     println("=" ^ 60)
     println("  L = $L ($N spins)")
     println("  J2/J1 = $j2_j1")
@@ -299,52 +197,15 @@ function run_dmrg_rdm(L::Int, j2_j1::Float64, bond_dim::Int, output_file::String
     println("Max bond dim = $(maxlinkdim(psi))")
     println()
     
-    println("Computing observables...")
+    println("Computing features and observables...")
     flush(stdout)
-    observables = compute_observables(psi, sites, L, energy)
+    features, observables = compute_features(psi, sites, L, energy)
     
-    println("Computing single-site RDMs...")
-    flush(stdout)
-    single_rdms = [compute_single_site_rdm(psi, i) for i in 1:N]
-    single_rdm_vec = Float64[]
-    for rdm in single_rdms
-        for val in rdm
-            push!(single_rdm_vec, real(val))
-            push!(single_rdm_vec, imag(val))
-        end
-    end
-    
-    println("Computing NN 2-site RDMs...")
-    flush(stdout)
-    # For simplicity, compute RDMs for a subset of bonds (all would be expensive)
-    # Use bonds along a row and column through center
-    nn_rdms = Matrix{ComplexF64}[]
-    mid = L ÷ 2 + 1
-    
-    # Horizontal bonds in middle row
-    for ix in 1:L
-        i = site_to_index(ix, mid, L)
-        jx = mod1(ix + 1, L)
-        j = site_to_index(jx, mid, L)
-        if abs(i - j) == 1  # Only adjacent in MPS ordering
-            push!(nn_rdms, compute_two_site_rdm(psi, min(i,j), max(i,j)))
-        end
-    end
-    
-    # Vertical bonds in middle column
-    for iy in 1:L
-        i = site_to_index(mid, iy, L)
-        jy = mod1(iy + 1, L)
-        j = site_to_index(mid, jy, L)
-        if abs(i - j) == L  # Vertical neighbors differ by L in row-major
-            push!(nn_rdms, compute_two_site_rdm(psi, min(i,j), max(i,j)))
-        end
-    end
-    
-    nn_rdm_vec = rdms_to_vector(nn_rdms)
-    
-    # Combine into single feature vector
-    rdm_features = vcat(single_rdm_vec, nn_rdm_vec)
+    println("  Feature vector dim: $(length(features))")
+    println("  Staggered mag: $(observables[3])")
+    println("  S(π,π): $(observables[6])")
+    println("  Entanglement entropy: $(observables[8])")
+    println()
     
     println("Saving to $output_file...")
     flush(stdout)
@@ -352,14 +213,11 @@ function run_dmrg_rdm(L::Int, j2_j1::Float64, bond_dim::Int, output_file::String
     h5open(output_file, "w") do f
         f["energy"] = energy
         f["observables"] = observables
-        f["rdm_features"] = rdm_features
-        f["single_rdm_vec"] = single_rdm_vec
+        f["rdm_features"] = features
         f["L"] = L
         f["j2_j1"] = j2_j1
         f["bond_dim"] = maxlinkdim(psi)
-        f["n_single_rdms"] = N
-        f["n_nn_rdms"] = length(nn_rdms)
-        f["rdm_feature_dim"] = length(rdm_features)
+        f["rdm_feature_dim"] = length(features)
         
         obs_names = ["energy", "energy_density", "staggered_magnetization",
                      "stripe_order", "plaquette_order", "S_pi_pi", "S_pi_0",
@@ -367,10 +225,10 @@ function run_dmrg_rdm(L::Int, j2_j1::Float64, bond_dim::Int, output_file::String
         f["observable_names"] = obs_names
     end
     
-    println("Done! RDM feature dim = $(length(rdm_features))")
+    println("Done!")
     println("=" ^ 60)
     
-    return energy, observables, rdm_features
+    return energy, observables, features
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
