@@ -96,7 +96,7 @@ run_dmrg_for_L() {
         
         echo ""
         echo "[$((i+1))/$N_POINTS] L=$L, J2=$J2"
-        julia scripts/deployment/j1j2_dmrg_rdm.jl $L $J2 $BOND_DIM "$TEMP_FILE"
+        julia -t 8 scripts/deployment/j1j2_dmrg_rdm.jl $L $J2 $BOND_DIM "$TEMP_FILE"
     done
     
     # Combine into single file
