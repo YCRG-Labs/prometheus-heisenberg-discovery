@@ -30,6 +30,7 @@ def main():
     # Load config
     config = Config.from_yaml('configs/vm_config.yaml')
     storage = DataStorage(config)
+    lattice_sizes = list(config.ed_parameters.lattice_sizes)
     
     # Step 1: Convert DMRG data if needed
     logger.info("\n" + "=" * 80)
@@ -39,7 +40,7 @@ def main():
     all_obs = []
     states = {}
     
-    for L in [6, 8]:
+    for L in lattice_sizes:
         dmrg_file = Path(f'data/groundstates_L{L}_rdm.h5')
         
         if not dmrg_file.exists():
@@ -57,7 +58,9 @@ def main():
         
         # Load ground states
         states_L = storage.load_ground_states_for_lattice_size(L)
-        states.update(states_L)
+        # DataStorage returns keys as (L, j2_j1); QVAE pipeline expects (j2_j1, L)
+        for (Lk, j2_j1), state in states_L.items():
+            states[(j2_j1, Lk)] = state
         
         logger.info(f"✓ Loaded {len(states_L)} ground states for L={L}")
     
@@ -77,13 +80,20 @@ def main():
     
     qvae_module = QVAEModule(config)
     
-    for L in [6, 8]:
+    for L in lattice_sizes:
         try:
             qvae_module.load_model(L, storage)
             logger.info(f"✓ Loaded Q-VAE model for L={L}")
         except Exception as e:
-            logger.error(f"Failed to load model for L={L}: {e}")
-            sys.exit(1)
+            logger.warning(f"Could not load model for L={L}: {e}")
+            logger.info(f"Training Q-VAE model for L={L}...")
+            try:
+                qvae_module.train_for_lattice_size(states, L)
+                qvae_module.save_model(L, storage)
+                logger.info(f"✓ Trained and saved Q-VAE model for L={L}")
+            except Exception as train_exc:
+                logger.exception(f"Failed to train/save model for L={L}: {train_exc!r}")
+                sys.exit(1)
     
     # Encode all states to latent space
     logger.info("\nEncoding ground states to latent space...")
@@ -99,7 +109,8 @@ def main():
     opd_module = OrderParameterDiscovery(config)
     discovery_results = opd_module.discover_order_parameters(latent_reps, observables)
     
-    storage.save_metadata('order_parameter_discovery', discovery_results)
+    # discovery_results can contain DataFrames; save to JSON with robust serialization
+    storage.save_analysis_results(discovery_results, "order_parameter_discovery.json")
     
     logger.info("\nDiscovered order parameters:")
     for latent_dim, observable in discovery_results.get('discovered_order_parameters', {}).items():
@@ -222,7 +233,8 @@ def main():
         }
     }
     
-    storage.save_metadata('analysis_summary', summary)
+    # summary can include DataFrames/ndarrays; use robust JSON serialization
+    storage.save_analysis_results(summary, "analysis_summary_full.json")
     
     # Also save as JSON for easy access
     import json

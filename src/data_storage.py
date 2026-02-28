@@ -710,11 +710,13 @@ class DataStorage:
         This loads ground states from the HDF5 format produced by
         generate_groundstates.py (DMRG/ITensor backend).
         
-        The file format has groups named "J2_{j2_val:.3f}" containing:
-        - psi: wavefunction coefficients
-        - energy: ground state energy
-        - observables: array of 11 observable values
-        - attrs: j2_j1, L, chi, etc.
+        Supported file formats (both appear in this repo):
+        1) Wavefunction format (attrs-based):
+           - group attrs: j2_j1, L, chi, timestamp, ...
+           - datasets: psi, energy, observables
+        2) RDM-feature format (dataset-based):
+           - datasets: j2_j1, L, bond_dim, rdm_features, energy, observables, observable_names, ...
+           - attrs may be empty
         
         Args:
             filepath: Path to HDF5 file (e.g., groundstates_L6.h5)
@@ -743,27 +745,57 @@ class DataStorage:
             with h5py.File(filepath, 'r') as f:
                 for key in sorted(f.keys()):
                     grp = f[key]
-                    
-                    j2_j1 = float(grp.attrs['j2_j1'])
-                    L = int(grp.attrs['L'])
-                    
-                    # Load data
-                    psi = grp['psi'][:]
+
+                    # j2_j1 and L can be stored either as attrs (wavefunction format)
+                    # or as datasets (rdm-feature format).
+                    if 'j2_j1' in grp.attrs:
+                        j2_j1 = float(grp.attrs['j2_j1'])
+                    elif 'j2_j1' in grp:
+                        j2_j1 = float(grp['j2_j1'][()])
+                    else:
+                        raise KeyError("Missing j2_j1 (attr or dataset)")
+
+                    if 'L' in grp.attrs:
+                        L = int(grp.attrs['L'])
+                    elif 'L' in grp:
+                        L = int(grp['L'][()])
+                    else:
+                        raise KeyError("Missing L (attr or dataset)")
+
+                    # Load coefficients-like vector.
+                    # Prefer full wavefunction if present; otherwise fall back to rdm_features.
+                    if 'psi' in grp:
+                        psi = grp['psi'][:]
+                        source = 'dmrg_hdf5_psi'
+                    elif 'rdm_features' in grp:
+                        psi = grp['rdm_features'][:]
+                        source = 'dmrg_hdf5_rdm_features'
+                    else:
+                        raise KeyError("Missing psi/rdm_features dataset")
+
                     energy = float(grp['energy'][()])
                     observables = grp['observables'][:]
                     
                     # Build metadata
                     metadata = {
-                        'chi': int(grp.attrs.get('chi', 0)),
+                        'chi': int(grp.attrs.get('chi', grp.get('bond_dim', [0])[()] if 'bond_dim' in grp else 0)),
                         'timestamp': grp.attrs.get('timestamp', 'unknown'),
                         'hilbert_dim': len(psi),
-                        'source': 'dmrg_hdf5'
+                        'source': source,
                     }
                     
                     # Get observable names if available
                     if 'observable_names' in grp.attrs:
-                        obs_names = list(grp.attrs['observable_names'])
-                        metadata['observable_names'] = obs_names
+                        metadata['observable_names'] = list(grp.attrs['observable_names'])
+                    elif 'observable_names' in grp:
+                        try:
+                            metadata['observable_names'] = [
+                                x.decode('utf-8') if isinstance(x, (bytes, bytearray)) else str(x)
+                                for x in grp['observable_names'][:]
+                            ]
+                        except Exception:
+                            # Keep going; downstream uses defaults if names missing.
+                            pass
                     
                     states[(j2_j1, L)] = {
                         'coefficients': psi,
@@ -809,9 +841,25 @@ class DataStorage:
         
         # Convert and save each state
         for (j2_j1, L), state_data in dmrg_states.items():
+            coeffs = state_data['coefficients']
+            # Ensure complex dtype for GroundState API; rdm_features may be real-valued.
+            if not np.iscomplexobj(coeffs):
+                coeffs = coeffs.astype(np.float64) + 0.0j
+            else:
+                coeffs = coeffs.astype(np.complex128)
+
+            # Normalize (some inputs are feature vectors rather than true wavefunctions).
+            # If the vector is all zeros, skip with a clear error.
+            norm = np.linalg.norm(coeffs)
+            if norm == 0.0:
+                raise ValueError(
+                    f"Cannot convert state with zero-norm coefficients for L={L}, j2_j1={j2_j1}"
+                )
+            coeffs = coeffs / norm
+
             # Create GroundState object
             ground_state = GroundState(
-                coefficients=state_data['coefficients'],
+                coefficients=coeffs,
                 energy=state_data['energy'],
                 basis=None,  # Not available from DMRG
                 j2_j1=j2_j1,
